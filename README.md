@@ -16,14 +16,19 @@ Hono-only admin panel for Cloudflare Workers Free.
 npm install
 # Create a D1 database, then replace database_id in wrangler.jsonc
 npm run db:migrate:local
+# Set local secrets in .dev.vars (never commit them):
+# SESSION_SECRET=use-a-long-random-secret
+# SETUP_TOKEN=use-a-one-time-bootstrap-token
 npm run dev
 ```
 
-Before deployment, set the real D1 database ID and apply the migration remotely:
+Open `/setup` once to create the owner, then delete or rotate `SETUP_TOKEN` before production. Before deployment, set the real D1 database ID and secrets:
 
 ```sh
+wrangler secret put SESSION_SECRET
+wrangler secret put SETUP_TOKEN
 npm run db:migrate:remote
 npm run deploy
 ```
 
-The first migration creates the users, sessions, roles, permissions, user-role, role-permission, and audit-log tables. Authentication and RBAC routes are the next implementation slice.
+Login uses PBKDF2-SHA256 with per-user salts, signed HttpOnly/Secure/SameSite cookies, D1-backed sessions, session expiry, logout revocation, and audit events. Benchmark `PBKDF2_ITERATIONS` on the deployed Free Worker before production; the 10ms CPU budget is tight.
