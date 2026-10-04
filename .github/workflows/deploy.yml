@@ -35,10 +35,14 @@ jobs:
 
   deploy:
     name: Deploy to Cloudflare Workers
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    # Production is intentionally manual. The production environment must have
+    # required reviewers configured in GitHub Settings before this job can run.
+    if: github.event_name == 'workflow_dispatch'
     needs: verify
     runs-on: ubuntu-latest
-    environment: production
+    environment:
+      name: production
+      url: https://hono-free-tier-admin.workers.dev
     permissions:
       contents: read
     steps:
