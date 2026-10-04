@@ -12,7 +12,7 @@
     {
       "binding": "ADMIN_DB",
       "database_name": "hono-free-tier-admin",
-      "database_id": "REPLACE_WITH_D1_DATABASE_ID",
+      "database_id": "170908ef-2c2d-444b-bb32-fa059f319ebf",
       "migrations_dir": "src/db/migrations"
     }
   ]
