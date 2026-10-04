@@ -6,6 +6,14 @@ import { hashPassword, verifyPassword, createSession, destroySession, requireAut
 type Bindings = { ADMIN_DB: D1Database; ASSETS: Fetcher; SESSION_SECRET: string; SETUP_TOKEN: string }
 const app = new Hono<{ Bindings: Bindings }>()
 app.use('*', secureHeaders())
+app.use('*', async (c, next) => {
+  if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(c.req.method)) {
+    const origin = c.req.header('Origin')
+    const expected = new URL(c.req.url).origin
+    if (!origin || origin !== expected) return c.text('Invalid request origin', 403)
+  }
+  await next()
+})
 
 app.get('/', (c) => c.html(page('Hono Admin', `<p class="eyebrow">HONO FREE-TIER ADMIN</p><h1>Admin panel foundation</h1><p class="lede">Hono-only UI, Cloudflare Workers Free constraints, and D1-ready RBAC.</p><a class="button" href="/login">Sign in</a>`)))
 app.get('/health', (c) => c.json({ ok: true, service: 'hono-free-tier-admin' }))
