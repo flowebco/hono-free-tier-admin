@@ -1,6 +1,6 @@
 PRAGMA foreign_keys = ON;
 
-CREATE TABLE users (
+CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
   email TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
@@ -11,7 +11,7 @@ CREATE TABLE users (
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE roles (
+CREATE TABLE IF NOT EXISTS roles (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL UNIQUE,
   description TEXT,
@@ -19,26 +19,26 @@ CREATE TABLE roles (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE permissions (
+CREATE TABLE IF NOT EXISTS permissions (
   id TEXT PRIMARY KEY,
   key TEXT NOT NULL UNIQUE,
   description TEXT,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE role_permissions (
+CREATE TABLE IF NOT EXISTS role_permissions (
   role_id TEXT NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
   permission_id TEXT NOT NULL REFERENCES permissions(id) ON DELETE CASCADE,
   PRIMARY KEY (role_id, permission_id)
 );
 
-CREATE TABLE user_roles (
+CREATE TABLE IF NOT EXISTS user_roles (
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   role_id TEXT NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
   PRIMARY KEY (user_id, role_id)
 );
 
-CREATE TABLE sessions (
+CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   expires_at TEXT NOT NULL,
@@ -47,7 +47,7 @@ CREATE TABLE sessions (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE audit_log (
+CREATE TABLE IF NOT EXISTS audit_log (
   id TEXT PRIMARY KEY,
   user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
   action TEXT NOT NULL,
@@ -56,12 +56,12 @@ CREATE TABLE audit_log (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_sessions_user_id ON sessions(user_id);
-CREATE INDEX idx_sessions_expires_at ON sessions(expires_at);
-CREATE INDEX idx_user_roles_user_id ON user_roles(user_id);
-CREATE INDEX idx_role_permissions_role_id ON role_permissions(role_id);
-CREATE INDEX idx_audit_log_created_at ON audit_log(created_at);
+CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
+CREATE INDEX IF NOT EXISTS idx_user_roles_user_id ON user_roles(user_id);
+CREATE INDEX IF NOT EXISTS idx_role_permissions_role_id ON role_permissions(role_id);
+CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON audit_log(created_at);
 
-INSERT INTO roles (id, name, description, is_system) VALUES ('role_owner', 'owner', 'Full access', 1);
-INSERT INTO permissions (id, key, description) VALUES ('perm_all', '*', 'Full access');
-INSERT INTO role_permissions (role_id, permission_id) VALUES ('role_owner', 'perm_all');
+INSERT OR IGNORE INTO roles (id, name, description, is_system) VALUES ('role_owner', 'owner', 'Full access', 1);
+INSERT OR IGNORE INTO permissions (id, key, description) VALUES ('perm_all', '*', 'Full access');
+INSERT OR IGNORE INTO role_permissions (role_id, permission_id) VALUES ('role_owner', 'perm_all');

@@ -73,7 +73,7 @@ export async function destroySession(c: Context<Env>) {
 export const requireAuth = createMiddleware<Env>(async (c, next) => {
   const id = await getSignedCookie(c, c.env.SESSION_SECRET, SESSION_COOKIE)
   if (!id) return c.redirect('/login')
-  const row = await c.env.ADMIN_DB.prepare("SELECT u.id, u.email, u.status, s.expires_at FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.id = ? AND s.expires_at > datetime('now') LIMIT 1").bind(id).first<User & { expires_at: string }>()
+  const row = await c.env.ADMIN_DB.prepare("SELECT u.id, u.email, u.status, s.expires_at FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.id = ? AND s.expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now') LIMIT 1").bind(id).first<User & { expires_at: string }>()
   if (!row || row.status !== 'active') { await destroySession(c); return c.redirect('/login') }
   c.set('user', row)
   await next()
