@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import { html } from 'hono/html'
 import { secureHeaders } from 'hono/secure-headers'
-import { hashPassword, verifyPassword, createSession, destroySession, requireAuth, can } from './auth'
+import { hashPassword, verifyPassword, createSession, destroySession, requireAuth, can, isLoginBlocked, recordLoginFailure, MAX_PASSWORD_LENGTH } from './auth'
 
 type Bindings = { ADMIN_DB: D1Database; ASSETS: Fetcher; SESSION_SECRET: string; SETUP_TOKEN: string }
 const app = new Hono<{ Bindings: Bindings }>()
@@ -9,8 +9,7 @@ app.use('*', secureHeaders())
 app.use('*', async (c, next) => {
   if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(c.req.method)) {
     const origin = c.req.header('Origin')
-    const expected = new URL(c.req.url).origin
-    if (!origin || origin !== expected) return c.text('Invalid request origin', 403)
+    if (!origin || origin !== new URL(c.req.url).origin) return c.text('Invalid request origin', 403)
   }
   await next()
 })
@@ -18,16 +17,21 @@ app.use('*', async (c, next) => {
 app.get('/', (c) => c.html(page('Hono Admin', `<p class="eyebrow">HONO FREE-TIER ADMIN</p><h1>Admin panel foundation</h1><p class="lede">Hono-only UI, Cloudflare Workers Free constraints, and D1-ready RBAC.</p><a class="button" href="/login">Sign in</a>`)))
 app.get('/health', (c) => c.json({ ok: true, service: 'hono-free-tier-admin' }))
 
-app.get('/login', (c) => c.html(page('Login', `<p class="eyebrow">HONO ADMIN</p><h1>Sign in</h1><form method="post"><label>Email<input name="email" type="email" autocomplete="username" required /></label><label>Password<input name="password" type="password" autocomplete="current-password" required /></label><button class="button" type="submit">Sign in</button></form>`)))
+app.get('/login', (c) => c.html(page('Login', `<p class="eyebrow">HONO ADMIN</p><h1>Sign in</h1><form method="post"><label>Email<input name="email" type="email" maxlength="320" autocomplete="username" required /></label><label>Password<input name="password" type="password" maxlength="${MAX_PASSWORD_LENGTH}" autocomplete="current-password" required /></label><button class="button" type="submit">Sign in</button></form>`)))
 app.post('/login', async (c) => {
   const form = await c.req.parseBody()
-  const email = String(form.email ?? '').trim().toLowerCase()
+  const email = String(form.email ?? '').trim().toLowerCase().slice(0, 320)
   const password = String(form.password ?? '')
+  const ip = c.req.header('CF-Connecting-IP') ?? 'unknown'
+  if (await isLoginBlocked(c.env.ADMIN_DB, email, ip)) return c.html(page('Login', `<p class="error">Too many attempts. Try again later.</p>`), 429)
   const row = await c.env.ADMIN_DB.prepare('SELECT id, email, status, password_hash, password_salt, password_iterations FROM users WHERE email = ? LIMIT 1').bind(email).first<{ id: string; email: string; status: 'active' | 'disabled'; password_hash: string; password_salt: string; password_iterations: number }>()
   const valid = row && row.status === 'active' && await verifyPassword(password, row.password_hash, row.password_salt, row.password_iterations)
-  if (!valid) return c.html(page('Login', `<p class="error">Invalid email or password.</p><a href="/login">Try again</a>`), 401)
+  if (!valid) { await recordLoginFailure(c.env.ADMIN_DB, email, ip); return c.html(page('Login', `<p class="error">Invalid email or password.</p><a href="/login">Try again</a>`), 401) }
   await createSession(c, row)
-  await c.env.ADMIN_DB.prepare('INSERT INTO audit_log (id, user_id, action, target) VALUES (?, ?, ?, ?)').bind(crypto.randomUUID(), row.id, 'auth.login', row.id).run()
+  await c.env.ADMIN_DB.batch([
+    c.env.ADMIN_DB.prepare('DELETE FROM login_attempts WHERE key = ?').bind(`${email}|${ip}`.slice(0, 512)),
+    c.env.ADMIN_DB.prepare('INSERT INTO audit_log (id, user_id, action, target) VALUES (?, ?, ?, ?)').bind(crypto.randomUUID(), row.id, 'auth.login', row.id)
+  ])
   return c.redirect('/admin', 303)
 })
 
@@ -36,14 +40,14 @@ app.post('/logout', async (c) => { await destroySession(c); return c.redirect('/
 app.get('/setup', async (c) => {
   const count = await c.env.ADMIN_DB.prepare('SELECT COUNT(*) as count FROM users').first<{ count: number }>()
   if (count?.count) return c.text('Setup is already complete', 409)
-  return c.html(page('Initial setup', `<p class="eyebrow">ONE-TIME SETUP</p><h1>Create owner</h1><form method="post"><label>Setup token<input name="token" type="password" required /></label><label>Email<input name="email" type="email" required /></label><label>Password<input name="password" type="password" minlength="12" required /></label><button class="button" type="submit">Create owner</button></form>`))
+  return c.html(page('Initial setup', `<p class="eyebrow">ONE-TIME SETUP</p><h1>Create owner</h1><form method="post"><label>Setup token<input name="token" type="password" required /></label><label>Email<input name="email" type="email" maxlength="320" required /></label><label>Password<input name="password" type="password" minlength="12" maxlength="${MAX_PASSWORD_LENGTH}" required /></label><button class="button" type="submit">Create owner</button></form>`))
 })
 app.post('/setup', async (c) => {
   const count = await c.env.ADMIN_DB.prepare('SELECT COUNT(*) as count FROM users').first<{ count: number }>()
   const form = await c.req.parseBody()
   if (count?.count || String(form.token ?? '') !== c.env.SETUP_TOKEN) return c.text('Not found', 404)
-  const email = String(form.email ?? '').trim().toLowerCase(); const password = String(form.password ?? '')
-  if (!email || password.length < 12) return c.text('Email and a 12+ character password are required', 400)
+  const email = String(form.email ?? '').trim().toLowerCase().slice(0, 320); const password = String(form.password ?? '')
+  if (!email || password.length < 12 || password.length > MAX_PASSWORD_LENGTH) return c.text('Email and a 12-128 character password are required', 400)
   const hashed = await hashPassword(password)
   const userId = crypto.randomUUID()
   await c.env.ADMIN_DB.batch([
@@ -54,6 +58,7 @@ app.post('/setup', async (c) => {
   await createSession(c, { id: userId, email, status: 'active' }); return c.redirect('/admin', 303)
 })
 
+app.use('/admin', requireAuth)
 app.use('/admin/*', requireAuth)
 app.get('/admin', can('*'), (c) => c.html(page('Dashboard', `<p class="eyebrow">SIGNED IN</p><h1>Dashboard</h1><p class="lede">${escapeHtml(c.get('user').email)}</p><form method="post" action="/logout"><button class="button" type="submit">Sign out</button></form>`)))
 app.notFound((c) => c.json({ error: 'Not found' }, 404))
