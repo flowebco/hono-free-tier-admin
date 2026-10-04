@@ -3,7 +3,7 @@ import { html } from 'hono/html'
 import { secureHeaders } from 'hono/secure-headers'
 import { hashPassword, verifyPassword, createSession, destroySession, requireAuth, can, isLoginBlocked, recordLoginFailure, MAX_PASSWORD_LENGTH } from './auth'
 
-type Bindings = { ADMIN_DB: D1Database; ASSETS: Fetcher; SESSION_SECRET: string; SETUP_TOKEN: string }
+type Bindings = { ADMIN_DB: D1Database; SESSION_SECRET: string; SETUP_TOKEN: string }
 const app = new Hono<{ Bindings: Bindings }>()
 app.use('*', secureHeaders())
 app.use('*', async (c, next) => {
@@ -63,7 +63,20 @@ app.use('/admin/*', requireAuth)
 app.get('/admin', can('*'), (c) => c.html(page('Dashboard', `<p class="eyebrow">SIGNED IN</p><h1>Dashboard</h1><p class="lede">${escapeHtml(c.get('user').email)}</p><form method="post" action="/logout"><button class="button" type="submit">Sign out</button></form>`)))
 app.notFound((c) => c.json({ error: 'Not found' }, 404))
 
+async function cleanupExpiredData(db: D1Database) {
+  await db.batch([
+    db.prepare("DELETE FROM sessions WHERE expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"),
+    db.prepare("DELETE FROM login_attempts WHERE window_started_at <= datetime('now', '-1 day')")
+  ])
+}
+
 function escapeHtml(value: string) { return value.replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[char]!)) }
 function page(title: string, content: string) { return html`<!doctype html><html lang="en"><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><title>${title}</title><style>${styles}</style></head><body><main class="shell">${html([content] as unknown as TemplateStringsArray)}</main></body></html>` }
 const styles = `:root { color-scheme: dark; font-family: system-ui, sans-serif; background: #101114; color: #f5f7fa; } body { margin: 0; min-height: 100vh; display: grid; place-items: center; } .shell { width: min(680px, calc(100% - 40px)); padding: 48px; border: 1px solid #2d313a; border-radius: 20px; background: #17191f; box-shadow: 0 20px 60px #0006; } .eyebrow { color: #9ea7ff; letter-spacing: .12em; font-size: .75rem; font-weight: 700; } h1 { font-size: clamp(2.2rem, 7vw, 4.5rem); line-height: .95; margin: 20px 0; } .lede { color: #b7bdc9; font-size: 1.1rem; line-height: 1.6; } label { display: grid; gap: 8px; margin: 16px 0; } input { padding: 12px; border-radius: 8px; border: 1px solid #3a3e48; background: #101114; color: inherit; } .button { display: inline-block; margin-top: 20px; padding: 12px 18px; border: 0; border-radius: 10px; background: #9ea7ff; color: #101114; text-decoration: none; font-weight: 700; cursor: pointer; } .error { color: #ff8e8e; }`
-export default app
+
+export default {
+  fetch: (request: Request, env: Bindings, ctx: ExecutionContext) => app.fetch(request, env, ctx),
+  scheduled: (_controller: ScheduledController, env: Bindings, ctx: ExecutionContext) => {
+    ctx.waitUntil(cleanupExpiredData(env.ADMIN_DB))
+  }
+} satisfies ExportedHandler<Bindings>
